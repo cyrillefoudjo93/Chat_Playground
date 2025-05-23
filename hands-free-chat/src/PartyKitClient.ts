@@ -10,16 +10,16 @@ partySocket.onmessage = (event: MessageEvent) => {
   // Handle incoming messages here
 };
 
-partySocket.onopen = (event: Event) => {
+partySocket.onopen = () => {
   console.log("Connected to PartyKit");
 };
 
-partySocket.onclose = (event: Event) => {
+partySocket.onclose = () => {
   console.log("Disconnected from PartyKit");
 };
 
 partySocket.onerror = (event: Event) => {
-  console.error("PartyKit error:", event);
+  console.error("PartyKit error occurred", event);
 };
 
 export default partySocket;

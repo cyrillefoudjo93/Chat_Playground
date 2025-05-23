@@ -5,6 +5,7 @@ import { AppModule } from './app.module';
 import helmet from 'helmet';
 import * as cookieParser from 'cookie-parser';
 import * as compression from 'compression';
+import * as session from 'express-session';
 
 async function bootstrap() {
   // Create NestJS application
@@ -27,6 +28,18 @@ async function bootstrap() {
   app.use(helmet());
   app.use(cookieParser());
   app.use(compression());
+  
+  // Configure session for OAuth2
+  app.use(session({
+    secret: configService.get('SESSION_SECRET', 'your-session-secret-change-in-production'),
+    resave: false,
+    saveUninitialized: false,
+    cookie: { 
+      secure: configService.get('NODE_ENV') === 'production',
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
+  }));
   
   // Configure global validation
   app.useGlobalPipes(

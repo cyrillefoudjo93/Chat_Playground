@@ -7,8 +7,9 @@ import {
   OnGatewayConnection,
   OnGatewayDisconnect,
   OnGatewayInit,
+  WsException,
 } from '@nestjs/websockets';
-import { UseGuards } from '@nestjs/common';
+import { UseGuards, Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -16,80 +17,190 @@ import { AuditLogService } from '../audit-logging/services/audit-log.service';
 import { AuditEventType, AuditEventStatus } from '../audit-logging/interfaces/audit-log.interface';
 import { AIOrchestrationService } from '../ai-providers/services/ai-orchestration.service';
 import { AIChatMessage } from '../ai-providers/interfaces/ai-provider.interface';
+import { ConnectionManager } from './services/connection-manager.service';
+import { StatsManager } from './services/stats-manager.service';
+import { v4 as uuidv4 } from 'uuid';
 
 @WebSocketGateway({
   cors: {
-    origin: '*', // Configure this according to your frontend domains
+    origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173'],
+    credentials: true,
   },
   namespace: 'chat',
+  transports: ['websocket', 'polling'],
+  pingInterval: 10000,
+  pingTimeout: 5000,
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
+  private readonly logger = new Logger(ChatGateway.name);
   @WebSocketServer() server: Server;
-  
+  private heartbeatIntervalMs = 30000;
+  private disconnectTimeoutMs = 90000;
+  private heartbeatIntervals = new Map<string, NodeJS.Timeout>();
+
   constructor(
     private readonly auditLogService: AuditLogService,
     private readonly aiOrchestrationService: AIOrchestrationService,
+    private readonly connectionManager: ConnectionManager,
+    private readonly statsManager: StatsManager,
   ) {}
 
   afterInit(server: Server) {
-    console.log('WebSocket Gateway initialized');
+    this.connectionManager.setServer(server);
+    this.logger.log('WebSocket Gateway initialized');
   }
 
   async handleConnection(client: Socket) {
     try {
-      // Verify authentication token
-      const token = client.handshake.auth.token;
-      if (!token) {
+      const authenticated = await this.connectionManager.handleConnection(client);
+      if (!authenticated) {
+        this.logger.warn(`Authentication failed for client ${client.id}`);
         client.disconnect();
         return;
       }
 
-      // In a real application, you'd verify the token here
-      // For now, we'll just store the connection
-      console.log(`Client connected: ${client.id}`);
+      this.logger.log(`Client connected: ${client.id}`);
+      this.initializeHeartbeat(client);
+
     } catch (error) {
+      this.logger.error(`Connection error: ${error.message}`, error.stack);
       client.disconnect();
     }
   }
 
   handleDisconnect(client: Socket) {
-    console.log(`Client disconnected: ${client.id}`);
+    try {
+      this.connectionManager.handleDisconnection(client);
+      this.cleanupHeartbeat(client.id);
+      this.logger.log(`Client disconnected: ${client.id}`);
+    } catch (error) {
+      this.logger.error(`Disconnection error: ${error.message}`, error.stack);
+    }
   }
 
-  // Use JWT authentication and rate limiting for WebSocket connections
+  private initializeHeartbeat(client: Socket) {
+    const interval = setInterval(() => {
+      client.emit('heartbeatRequest', { timestamp: Date.now() }, (response: any) => {
+        if (!response) {
+          this.logger.warn(`No heartbeat response from client ${client.id}`);
+          if (!client.disconnected) {
+            client.disconnect();
+          }
+        }
+      });
+    }, this.heartbeatIntervalMs);
+
+    this.heartbeatIntervals.set(client.id, interval);
+
+    // Set disconnect timeout
+    const disconnectTimeout = setTimeout(() => {
+      if (!client.disconnected) {
+        this.logger.warn(`Disconnecting client ${client.id} due to missed heartbeats`);
+        client.disconnect();
+      }
+    }, this.disconnectTimeoutMs);
+
+    client.once('disconnect', () => {
+      clearTimeout(disconnectTimeout);
+    });
+  }
+
+  private cleanupHeartbeat(clientId: string) {
+    const interval = this.heartbeatIntervals.get(clientId);
+    if (interval) {
+      clearInterval(interval);
+      this.heartbeatIntervals.delete(clientId);
+    }
+  }
+
+  @SubscribeMessage('heartbeat')
+  handleHeartbeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { timestamp: number },
+  ) {
+    try {
+      const latency = Date.now() - data.timestamp;
+      client.emit('heartbeatAck', { latency });
+    } catch (error) {
+      this.logger.error(`Heartbeat error: ${error.message}`, error.stack);
+    }
+  }
+
   @UseGuards(JwtAuthGuard, ThrottlerGuard)
   @SubscribeMessage('sendMessage')
   async handleMessage(
     @MessageBody() message: any,
     @ConnectedSocket() client: Socket,
   ) {
-    // Access user from JWT token
-    const user = client.data.user;
-    
-    // Create a new message with user info
-    const newMessage = {
-      ...message,
-      user: {
-        id: user.id,
-        username: user.username,
-      },
-      timestamp: new Date(),
-    };
-    
-    // Log the event
-    await this.auditLogService.log(
-      AuditEventType.CHAT_MESSAGE_SEND,
-      'send_message',
-      `User ${user.username} sent a message in room ${message.roomId}`,
-      AuditEventStatus.SUCCESS,
-      user.id,
-      { roomId: message.roomId, messageType: message.type },
-    );
-    
-    // Emit to all clients in the same room
-    this.server.to(message.roomId).emit('newMessage', newMessage);
-    
-    return { success: true, message: newMessage };
+    try {
+      const user = client.data.user;
+      const messageId = uuidv4();
+      
+      const newMessage = {
+        id: messageId,
+        ...message,
+        user: {
+          id: user.id,
+          username: user.username,
+        },
+        timestamp: new Date(),
+      };
+
+      await this.auditLogService.log(
+        AuditEventType.CHAT_MESSAGE_SEND,
+        'send_message',
+        `User ${user.username} sent a message in room ${message.roomId}`,
+        AuditEventStatus.SUCCESS,
+        user.id,
+        { roomId: message.roomId, messageType: message.type, messageId },
+      );
+
+      const recipients = await this.server.in(message.roomId).allSockets();
+      const deliveryPromises = Array.from(recipients)
+        .map(socketId => {
+          const socket = this.server.sockets.sockets.get(socketId);
+          if (!socket) {
+            this.logger.warn(`Socket ${socketId} not found, may have disconnected`);
+            return null;
+          }
+          return this.connectionManager.sendMessageWithRetry(
+            socket,
+            'newMessage',
+            newMessage,
+            messageId,
+          );
+        })
+        .filter((promise): promise is Promise<boolean> => promise !== null);
+
+      const deliveryResults = await Promise.all(deliveryPromises);
+      const deliveredCount = deliveryResults.filter(success => success).length;
+
+      if (deliveredCount === 0 && deliveryPromises.length > 0) {
+        this.logger.warn(`Message ${messageId} not delivered to any recipients`);
+        throw new WsException({
+          status: 'error',
+          message: 'Failed to deliver message to any recipients',
+        });
+      }
+
+      this.statsManager.incrementTotalMessages();
+      
+      return { 
+        success: true, 
+        messageId, 
+        message: newMessage,
+        deliveredCount,
+        totalRecipients: deliveryPromises.length,
+      };
+
+    } catch (error) {
+      this.logger.error(`Message handling error: ${error.message}`, error.stack);
+      throw new WsException({
+        status: 'error',
+        message: 'Failed to send message',
+        error: error.message,
+      });
+    }
   }
 
   @UseGuards(JwtAuthGuard)
@@ -99,8 +210,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     @ConnectedSocket() client: Socket,
   ) {
     client.join(roomId);
+    this.connectionManager.joinRoom(client.id, roomId);
     
-    // Notify others that a user joined
     const user = client.data.user;
     this.server.to(roomId).emit('userJoined', {
       userId: user.id,
@@ -118,8 +229,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     @ConnectedSocket() client: Socket,
   ) {
     client.leave(roomId);
+    this.connectionManager.leaveRoom(client.id, roomId);
     
-    // Notify others that a user left
     const user = client.data.user;
     this.server.to(roomId).emit('userLeft', {
       userId: user.id,
@@ -129,7 +240,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     
     return { success: true };
   }
-  
+
   @UseGuards(JwtAuthGuard)
   @SubscribeMessage('startTyping')
   async startTyping(
@@ -137,8 +248,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     @ConnectedSocket() client: Socket,
   ) {
     const user = client.data.user;
-    
-    // Broadcast to all users in the room except the sender
     client.to(data.roomId).emit('userTyping', {
       userId: user.id,
       username: user.username,
@@ -153,8 +262,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     @ConnectedSocket() client: Socket,
   ) {
     const user = client.data.user;
-    
-    // Broadcast to all users in the room except the sender
     client.to(data.roomId).emit('userTyping', {
       userId: user.id,
       username: user.username,
@@ -162,83 +269,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     });
   }
   
-  @UseGuards(JwtAuthGuard, ThrottlerGuard)
-  @SubscribeMessage('requestAICompletion')
-  async handleAICompletion(
-    @MessageBody() data: { 
-      prompt: string;
-      providerId?: string;
-      model?: string;
-      options?: any;
-    },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const user = client.data.user;
-    
-    try {
-      // Log the AI request
-      await this.auditLogService.log(
-        AuditEventType.AI_REQUEST,
-        'ai_completion',
-        `User ${user.username} requested AI completion`,
-        AuditEventStatus.SUCCESS,
-        user.id,
-        { 
-          providerId: data.providerId,
-          model: data.model,
-        },
-      );
-      
-      // Stream tokens to the client
-      const streamCallbacks = {
-        onToken: (token: string) => {
-          client.emit('aiToken', { token });
-        },
-        onComplete: (fullResponse: string) => {
-          client.emit('aiComplete', { response: fullResponse });
-        },
-        onError: (error: Error) => {
-          client.emit('aiError', { error: error.message });
-        },
-      };
-      
-      // Format the messages for the AI
-      const messages: AIChatMessage[] = [
-        { role: 'system', content: 'You are a helpful assistant.' },
-        { role: 'user', content: data.prompt },
-      ];
-      
-      // Use the specified provider or fallback
-      if (data.providerId && data.model) {
-        await this.aiOrchestrationService.streamCompletion(
-          data.providerId,
-          data.model,
-          messages,
-          streamCallbacks,
-          data.options,
-        );
-      } else {
-        // Use fallback strategy
-        await this.aiOrchestrationService.streamCompletionWithFallback(
-          messages,
-          streamCallbacks,
-          data.options,
-        );
-      }
-      
-      return { success: true };
-    } catch (error) {
-      // Log the error
-      await this.auditLogService.log(
-        AuditEventType.AI_REQUEST,
-        'ai_completion',
-        `AI request failed: ${error.message}`,
-        AuditEventStatus.FAILURE,
-        user.id,
-      );
-      
-      client.emit('aiError', { error: error.message });
-      return { success: false, error: error.message };
-    }
+  @UseGuards(JwtAuthGuard)
+  @SubscribeMessage('getStats')
+  getStats() {
+    return this.statsManager.getStats();
   }
 }

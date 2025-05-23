@@ -1,0 +1,71 @@
+version: '3.9'
+
+services:
+  # Backend NestJS Service
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+      target: production
+    container_name: chat-playground-backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - ALLOWED_ORIGINS=http://localhost:80,http://frontend:80
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./server/logs:/app/logs
+    networks:
+      - chat-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for rate limiting and caching
+  redis:
+    image: redis:alpine
+    container_name: chat-playground-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - chat-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  # Frontend React Service
+  frontend:
+    build:
+      context: ./hands-free-chat
+      dockerfile: Dockerfile
+      target: production
+    container_name: chat-playground-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - chat-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  chat-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local

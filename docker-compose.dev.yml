@@ -1,0 +1,65 @@
+version: '3.9'
+
+services:
+  # Backend NestJS Service with hot-reloading
+  backend-dev:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+      target: builder
+    container_name: chat-playground-backend-dev
+    command: pnpm run start:dev
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+      - ./server/logs:/app/logs
+    networks:
+      - chat-network-dev
+    depends_on:
+      - redis-dev
+
+  # Redis for rate limiting and caching
+  redis-dev:
+    image: redis:alpine
+    container_name: chat-playground-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data-dev:/data
+    networks:
+      - chat-network-dev
+  
+  # Frontend React Service with hot-reloading
+  frontend-dev:
+    build:
+      context: ./hands-free-chat
+      dockerfile: Dockerfile
+      target: builder
+    container_name: chat-playground-frontend-dev
+    command: pnpm run dev -- --host
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./hands-free-chat:/app
+      - /app/node_modules
+    networks:
+      - chat-network-dev
+    depends_on:
+      - backend-dev
+
+networks:
+  chat-network-dev:
+    driver: bridge
+
+volumes:
+  redis-data-dev:
+    driver: local

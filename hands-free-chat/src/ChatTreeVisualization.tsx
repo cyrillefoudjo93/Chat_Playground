@@ -65,7 +65,7 @@ const ChatTreeVisualization: React.FC<ChatTreeVisualizationProps> = ({ messages 
       .y(d => d.y ?? 0);
 
     // Add links between nodes
-    const links = svg
+    svg
       .selectAll<SVGPathElement, d3.HierarchyLink<TreeNode>>(".link")
       .data(root.links())
       .enter()
