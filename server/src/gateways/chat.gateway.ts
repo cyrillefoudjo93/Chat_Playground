@@ -11,8 +11,9 @@ import {
 } from '@nestjs/websockets';
 import { UseGuards, Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { WsJwtAuthGuard } from '../auth/guards/ws-jwt-auth.guard'; // Ensure WsJwtAuthGuard is imported
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { WebSocketRateLimitGuard } from '../rate-limiting/guards/websocket-rate-limit.guard';
 import { AuditLogService } from '../audit-logging/services/audit-log.service';
 import { AuditEventType, AuditEventStatus } from '../audit-logging/interfaces/audit-log.interface';
 import { AIOrchestrationService } from '../ai-providers/services/ai-orchestration.service';
@@ -31,6 +32,7 @@ import { v4 as uuidv4 } from 'uuid';
   pingInterval: 10000,
   pingTimeout: 5000,
 })
+@UseGuards(WsJwtAuthGuard) // Apply WsJwtAuthGuard at the Gateway CLASS level
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   private readonly logger = new Logger(ChatGateway.name);
   @WebSocketServer() server: Server;
@@ -113,7 +115,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
   }
 
-  @SubscribeMessage('heartbeat')
+  @SubscribeMessage('heartbeat') // No specific auth guard needed here if class level WsJwtAuthGuard is sufficient
   handleHeartbeat(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { timestamp: number },
@@ -126,7 +128,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
   }
 
-  @UseGuards(JwtAuthGuard, ThrottlerGuard)
+  @UseGuards(WebSocketRateLimitGuard) // WsJwtAuthGuard is already applied at class level
   @SubscribeMessage('sendMessage')
   async handleMessage(
     @MessageBody() message: any,
@@ -198,14 +200,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       throw new WsException({
         status: 'error',
         message: 'Failed to send message',
-        error: error.message,
+        details: error.message,
       });
     }
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(WebSocketRateLimitGuard) // WsJwtAuthGuard is already applied at class level
   @SubscribeMessage('joinRoom')
-  async joinRoom(
+  async handleJoinRoom(
     @MessageBody('roomId') roomId: string,
     @ConnectedSocket() client: Socket,
   ) {
@@ -222,9 +224,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     return { success: true };
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(WebSocketRateLimitGuard) // WsJwtAuthGuard is already applied at class level
   @SubscribeMessage('leaveRoom')
-  async leaveRoom(
+  async handleLeaveRoom(
     @MessageBody('roomId') roomId: string,
     @ConnectedSocket() client: Socket,
   ) {
@@ -241,9 +243,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     return { success: true };
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(WebSocketRateLimitGuard) // WsJwtAuthGuard is already applied at class level
   @SubscribeMessage('startTyping')
-  async startTyping(
+  async handleStartTyping(
     @MessageBody() data: { roomId: string },
     @ConnectedSocket() client: Socket,
   ) {
@@ -255,9 +257,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     });
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(WebSocketRateLimitGuard) // WsJwtAuthGuard is already applied at class level
   @SubscribeMessage('stopTyping')
-  async stopTyping(
+  async handleStopTyping(
     @MessageBody() data: { roomId: string },
     @ConnectedSocket() client: Socket,
   ) {
@@ -268,10 +270,97 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       isTyping: false,
     });
   }
-  
-  @UseGuards(JwtAuthGuard)
+
+  // No specific auth guard needed here if class level WsJwtAuthGuard is sufficient
+  // and if getStats is considered a non-sensitive operation post-connection
   @SubscribeMessage('getStats')
-  getStats() {
+  handleGetStats(@ConnectedSocket() client: Socket) {
     return this.statsManager.getStats();
+  }
+
+  @UseGuards(WebSocketRateLimitGuard) // WsJwtAuthGuard is already applied at class level
+  @SubscribeMessage('sendAiMessage')
+  async handleAiMessage(
+    @MessageBody() message: { text: string; model: string; roomId?: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    try {
+      const user = client.data.user;
+      const messageId = uuidv4();
+      
+      // Parse provider:model format
+      const [providerId, modelName] = message.model.includes(':') 
+        ? message.model.split(':') 
+        : ['gemini', 'gemini-pro']; // Default fallback
+      
+      const userMessage = {
+        id: messageId,
+        content: message.text,
+        sender: 'user',
+        user: {
+          id: user.id,
+          username: user.username,
+        },
+        timestamp: new Date(),
+        roomId: message.roomId,
+        isAIMessage: false,
+      };
+
+      // Emit user message first
+      const roomId = message.roomId || 'general';
+      this.server.to(roomId).emit('newMessage', userMessage);
+
+      // Prepare AI response
+      const aiMessageId = uuidv4();
+      let aiResponseContent = '';
+
+      const streamCallbacks = {
+        onToken: (token: string) => {
+          aiResponseContent += token;
+          client.emit('aiToken', { token, messageId: aiMessageId });
+        },
+        onComplete: (fullResponse: string) => {
+          const aiMessage = {
+            id: aiMessageId,
+            content: fullResponse,
+            sender: 'ai',
+            user: {
+              id: 'ai',
+              username: `${providerId.charAt(0).toUpperCase() + providerId.slice(1)} AI`,
+            },
+            timestamp: new Date(),
+            roomId: message.roomId,
+            isAIMessage: true,
+            model: message.model,
+          };
+          
+          this.server.to(roomId).emit('newMessage', aiMessage);
+          client.emit('aiComplete', { response: fullResponse, messageId: aiMessageId });
+        },
+        onError: (error: Error) => {
+          this.logger.error(`AI completion error: ${error.message}`, error.stack);
+          client.emit('aiError', { error: error.message, messageId: aiMessageId });
+        },
+      };
+
+      // Stream AI response
+      await this.aiOrchestrationService.streamCompletion(
+        providerId,
+        modelName,
+        [{ role: 'user', content: message.text }],
+        streamCallbacks,
+        { temperature: 0.7, maxTokens: 1000 }
+      );
+
+      return { success: true, messageId, aiMessageId };
+
+    } catch (error) {
+      this.logger.error(`AI message handling error: ${error.message}`, error.stack);
+      throw new WsException({
+        status: 'error',
+        message: 'Failed to process AI message',
+        error: error.message,
+      });
+    }
   }
 }

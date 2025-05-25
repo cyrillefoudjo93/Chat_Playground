@@ -12,6 +12,8 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
+import { SimpleRateLimitGuard } from '../../rate-limiting/guards/simple-rate-limit.guard';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { AuthService, User } from '../services/auth.service';
 import { OktaCallbackDto, AuthStatusDto } from '../dto/auth.dto';
@@ -29,6 +31,7 @@ export class AuthController {
   }
 
   @Get('okta')
+  @Throttle({ auth: { limit: 5, ttl: 300000 } }) // 5 attempts per 5 minutes
   @UseGuards(AuthGuard('okta-oauth2'))
   async oktaLogin() {
     // This endpoint initiates the Okta OAuth2 flow
@@ -36,6 +39,7 @@ export class AuthController {
   }
 
   @Get('okta/callback')
+  @Throttle({ auth: { limit: 10, ttl: 300000 } }) // 10 attempts per 5 minutes
   @UseGuards(AuthGuard('okta-oauth2'))
   async oktaCallback(@Req() req: Request & { user: User }, @Res() res: Response) {
     try {
@@ -70,6 +74,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 attempts per minute
   async refreshToken(@Body('refreshToken') refreshToken: string) {
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token is required');
@@ -88,6 +93,7 @@ export class AuthController {
   }
 
   @Post('refresh-cookie')
+  @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 attempts per minute
   async refreshTokenFromCookie(@Req() req: Request, @Res() res: Response) {
     const refreshToken = req.cookies?.refresh_token;
     
@@ -182,5 +188,30 @@ export class AuthController {
         roles: updatedUser.roles,
       },
     };
+  }
+
+  @Get('demo-token')
+  @Throttle({ 'demo-token': { limit: 20, ttl: 60000 } }) // Apply the new 'demo-token' throttler
+  async getDemoToken(): Promise<{ accessToken: string }> {
+    this.logger.log('Attempting to generate demo token...');
+    // Create a demo user for testing purposes
+    const demoUser: User = {
+      id: 'demo-user-id',
+      username: 'demo-user',
+      email: 'demo@example.com',
+      name: 'Demo User',
+      roles: ['user'],
+      provider: 'demo',
+    };
+    
+    try {
+      // Generate just an access token for the demo user
+      const { accessToken } = await this.authService.generateTokens(demoUser);
+      this.logger.log('Successfully generated demo token.');
+      return { accessToken };
+    } catch (error) {
+      this.logger.error('Error generating demo token:', error.stack);
+      throw error; // Re-throw the error to ensure it propagates and results in a 500 if not handled elsewhere
+    }
   }
 }

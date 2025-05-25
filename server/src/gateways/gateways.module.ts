@@ -5,6 +5,7 @@ import { ChatGateway } from './chat.gateway';
 import { AuthModule } from '../auth/auth.module';
 import { AIProvidersModule } from '../ai-providers/ai-providers.module';
 import { AuditLoggingModule } from '../audit-logging/audit-logging.module';
+import { RateLimitingModule } from '../rate-limiting/rate-limiting.module';
 import { ConnectionManager } from './services/connection-manager.service';
 import { StatsManager } from './services/stats-manager.service';
 
@@ -13,6 +14,7 @@ import { StatsManager } from './services/stats-manager.service';
     AuthModule,
     AIProvidersModule,
     AuditLoggingModule,
+    RateLimitingModule,
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env.development.local', '.env.development', '.env'],

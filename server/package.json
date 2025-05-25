@@ -21,6 +21,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.51.0",
+    "@google/generative-ai": "^0.2.1",
+    "@mistralai/mistralai": "^0.0.7",
     "@huggingface/inference": "^3.13.2",
     "@nestjs/cache-manager": "^3.0.1",
     "@nestjs/common": "^11.0.1",

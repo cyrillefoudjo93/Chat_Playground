@@ -7,35 +7,56 @@ import { WsException } from '@nestjs/websockets';
 
 // Custom token extractor for WebSocket connections
 const extractTokenFromSocket = (socket: Socket): string | null => {
+  console.log('WsJwtStrategy: Attempting to extract token from socket handshake:', JSON.stringify(socket.handshake, null, 2)); // Log entire handshake
+
   try {
-    // First check handshake auth token as it's the recommended way
+    // First check handshake auth token
+    console.log('WsJwtStrategy: Checking socket.handshake.auth...');
     if (socket.handshake?.auth?.token) {
       const token = socket.handshake.auth.token;
+      console.log('WsJwtStrategy: Found token in socket.handshake.auth:', token);
       if (typeof token === 'string' && token.length > 0) {
         return token;
       }
+      console.log('WsJwtStrategy: Token in socket.handshake.auth was invalid (empty or not a string).');
+    } else {
+      console.log('WsJwtStrategy: socket.handshake.auth or socket.handshake.auth.token is missing.');
+      console.log('WsJwtStrategy: socket.handshake.auth value:', socket.handshake?.auth);
     }
 
     // Then try authorization header
-    const authHeader = socket.handshake?.headers?.authorization;
-    if (authHeader) {
-      const [type, token] = authHeader.split(' ');
-      if (type?.toLowerCase() === 'bearer' && token?.length > 0) {
-        return token;
+    console.log('WsJwtStrategy: Checking socket.handshake.headers.authorization...');
+    if (socket.handshake?.headers?.authorization) {
+      const authHeader = socket.handshake.headers.authorization;
+      console.log('WsJwtStrategy: Found authorization header:', authHeader);
+      const [type, tokenValue] = authHeader.split(' ');
+      if (type?.toLowerCase() === 'bearer' && tokenValue?.length > 0) {
+        return tokenValue;
       }
+      console.log('WsJwtStrategy: Authorization header was not a valid bearer token.');
+    } else {
+      console.log('WsJwtStrategy: socket.handshake.headers or socket.handshake.headers.authorization is missing.');
+      console.log('WsJwtStrategy: socket.handshake.headers value:', socket.handshake?.headers);
     }
 
-    // Finally check query parameters (less secure, but sometimes needed)
+    // Finally check query parameters
+    console.log('WsJwtStrategy: Checking socket.handshake.query.token...');
     if (socket.handshake?.query?.token) {
       const token = socket.handshake.query.token;
+      console.log('WsJwtStrategy: Found token in socket.handshake.query:', token);
       if (typeof token === 'string' && token.length > 0) {
         return token;
       }
+      console.log('WsJwtStrategy: Token in socket.handshake.query was invalid (empty or not a string).');
+    } else {
+      console.log('WsJwtStrategy: socket.handshake.query or socket.handshake.query.token is missing.');
+      console.log('WsJwtStrategy: socket.handshake.query value:', socket.handshake?.query);
     }
-
-    throw new WsException('No valid authentication token found');
+    
+    console.warn('WsJwtStrategy: No valid authentication token found after checking all sources.');
+    return null; // Explicitly return null if no token found
   } catch (error) {
-    console.error('Error extracting token:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('WsJwtStrategy: Error during token extraction process:', error instanceof Error ? error.message : 'Unknown error', error);
     return null;
   }
 };
@@ -44,29 +65,33 @@ const extractTokenFromSocket = (socket: Socket): string | null => {
 export class WsJwtStrategy extends PassportStrategy(Strategy, 'ws-jwt') {
   constructor(private readonly configService: ConfigService) {
     super({
-      jwtFromRequest: (req: any) => {
+      jwtFromRequest: (req: any): string | null => {
         try {
-          // If request is a Socket instance
-          if (req instanceof Socket || req?.handshake) {
-            return extractTokenFromSocket(req);
-          }
-          
-          // If request is from WebSocket guard's getRequest
-          if (req && req.headers) {
-            const authHeader = req.headers.authorization;
-            if (authHeader) {
-              const [type, token] = authHeader.split(' ');
-              if (type?.toLowerCase() === 'bearer' && token) {
-                return token;
-              }
+          console.log('WsJwtStrategy: jwtFromRequest called. Validating if req is a socket.');
+          // req is the socket client instance passed from WsJwtAuthGuard's getRequest
+          // Check if it looks like a Socket.IO client object
+          if (req && typeof req.handshake === 'object' && typeof req.on === 'function') {
+            console.log('WsJwtStrategy: req is a valid socket. Calling extractTokenFromSocket.');
+            const token = extractTokenFromSocket(req as Socket); // Cast to Socket for extractTokenFromSocket
+            if (token === null) {
+                // This log is crucial.
+                console.warn('WsJwtStrategy: extractTokenFromSocket returned null. Passport-JWT will likely attempt its default extraction mechanisms, which might fail for WebSockets if handshake.headers is not what it expects.');
+            } else {
+                console.log('WsJwtStrategy: extractTokenFromSocket returned a token.');
             }
+            return token;
           }
           
-          // Add debugging
-          console.debug('No token found in request. Request type:', typeof req);
+          // If it's not a recognizable socket object, log and return null.
+          // This prevents passport-jwt from trying its default header extraction on an incompatible object.
+          console.warn(
+            'WsJwtStrategy: jwtFromRequest called with an object that does not appear to be a Socket.IO client. Type:',
+             typeof req,
+             'Object keys:', Object.keys(req || {}).join(', ')
+            );
           return null;
         } catch (error) {
-          console.error('Error extracting JWT from request:', error);
+          console.error('WsJwtStrategy: Unhandled error in jwtFromRequest:', error);
           return null;
         }
       },

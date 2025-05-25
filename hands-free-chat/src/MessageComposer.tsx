@@ -1,21 +1,25 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { Socket } from 'socket.io-client';
 
 interface MessageComposerProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  partyKitClient: any; // Consider using a more specific type
+  partyKitClient?: any; // Make partyKitClient optional
   selectedModel: string;
   setSelectedModel: (model: string) => void;
+  socket?: Socket | null; // Add socket reference for AI messages
 }
 
 interface AIModel {
   id: string;
   name: string;
+  provider: string;
 }
 
 const MessageComposer: React.FC<MessageComposerProps> = ({
   partyKitClient,
   selectedModel,
   setSelectedModel,
+  socket,
 }) => {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -23,7 +27,9 @@ const MessageComposer: React.FC<MessageComposerProps> = ({
 
   useEffect(() => {
     console.log('Fetching available models...');
-    fetch('http://localhost:3000/api/ai-providers/models') 
+    // Use relative URL to automatically adapt to where the frontend is served from
+    // This will work both in development and production environments
+    fetch('/api/ai-providers/models') 
       .then(response => {
         if (!response.ok) {
           console.error('Fetch response not OK:', response);
@@ -57,9 +63,21 @@ const MessageComposer: React.FC<MessageComposerProps> = ({
   // setSelectedModel is stable, and selectedModel is used to determine the initial default.
 
   const handleSend = () => {
-    if (input.trim()) {
-      // Send message to PartyKit backend
-      partyKitClient.send(JSON.stringify({ type: 'message', text: input, model: selectedModel }));
+    if (input.trim() && selectedModel) {
+      if (socket && socket.connected) {
+        // Send AI message via NestJS socket
+        socket.emit('sendAiMessage', { 
+          text: input, 
+          model: selectedModel,
+          roomId: 'general' // Default room
+        });
+      } else if (partyKitClient) { // Only use partyKitClient if it exists
+        // Fallback to PartyKit backend
+        partyKitClient.send(JSON.stringify({ type: 'message', text: input, model: selectedModel }));
+      } else {
+        console.warn('No WebSocket connection available (Socket.IO or PartyKit) to send message.');
+      }
+      
       setInput('');
       // Reset textarea height after sending
       if (textareaRef.current) {

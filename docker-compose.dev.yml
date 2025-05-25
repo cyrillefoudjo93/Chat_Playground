@@ -14,6 +14,13 @@ services:
       - NODE_ENV=development
       - PORT=3000
       - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - REDIS_HOST=redis-dev
+      - DEBUG=nest*,axios # Add this line for detailed NestJS and Axios logging
     ports:
       - "3000:3000"
     volumes:
@@ -24,6 +31,12 @@ services:
       - chat-network-dev
     depends_on:
       - redis-dev
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s # Give the backend time to start before health checks begin
 
   # Redis for rate limiting and caching
   redis-dev:
@@ -36,6 +49,11 @@ services:
       - redis-data-dev:/data
     networks:
       - chat-network-dev
+    healthcheck: # Added healthcheck for Redis
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   
   # Frontend React Service with hot-reloading
   frontend-dev:
@@ -54,7 +72,8 @@ services:
     networks:
       - chat-network-dev
     depends_on:
-      - backend-dev
+      backend-dev:
+        condition: service_healthy # Wait for backend-dev to be healthy
 
 networks:
   chat-network-dev:

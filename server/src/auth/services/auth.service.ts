@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthStatusDto } from '../dto/auth.dto';
@@ -23,6 +23,8 @@ export class AuthService {
   ) {}
 
   async generateTokens(user: User): Promise<{ accessToken: string; refreshToken: string }> {
+    const logger = new Logger(AuthService.name); // Local logger instance
+    logger.debug(`Generating tokens for user: ${user.username} (ID: ${user.id})`);
     const payload = {
       sub: user.id,
       username: user.username,
@@ -32,20 +34,26 @@ export class AuthService {
       provider: user.provider || 'local',
     };
 
-    const accessToken = await this.jwtService.signAsync(payload, {
-      secret: this.configService.get('JWT_SECRET'),
-      expiresIn: this.configService.get('JWT_EXPIRES_IN') || '12h',
-    });
+    try {
+      const accessToken = await this.jwtService.signAsync(payload, {
+        secret: this.configService.get<string>('JWT_SECRET'),
+        expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '12h',
+      });
+      logger.debug(`Access token generated successfully for user: ${user.username}`);
 
-    const refreshToken = await this.jwtService.signAsync(
-      { sub: user.id, type: 'refresh' },
-      {
-        secret: this.configService.get('JWT_REFRESH_SECRET') || this.configService.get('JWT_SECRET'),
-        expiresIn: this.configService.get('JWT_REFRESH_EXPIRES_IN') || '7d',
-      },
-    );
-
-    return { accessToken, refreshToken };
+      const refreshToken = await this.jwtService.signAsync(
+        { sub: user.id, type: 'refresh' },
+        {
+          secret: this.configService.get<string>('JWT_REFRESH_SECRET') || this.configService.get<string>('JWT_SECRET'),
+          expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+        },
+      );
+      logger.debug(`Refresh token generated successfully for user: ${user.username}`);
+      return { accessToken, refreshToken };
+    } catch (error) {
+      logger.error(`Error generating tokens for user ${user.username}:`, error.stack);
+      throw error; // Re-throw to be caught by the controller or NestJS error handler
+    }
   }
 
   async refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {

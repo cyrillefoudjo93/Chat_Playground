@@ -26,7 +26,7 @@ export interface AIStreamCallbacks {
 export interface AIProvider {
   id: string;
   name: string;
-  models: string[];
+  readonly models: string[]; // Added readonly
   generateCompletion(
     messages: AIChatMessage[],
     model: string,
