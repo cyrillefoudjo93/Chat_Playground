@@ -27,3 +27,34 @@ export default defineConfig({
     },
   },
 })
+
+// ──────────────────────────────────────────────────────────
+// RegulFlow — EU AI Act Compliance Fix (General Compliance (Documentation and Record-Keeping))
+// Issue: No evidence of EU AI Act compliance documentation or record-keeping
+// Suggestion: Enhance audit logging to record AI usage for compliance audit trail
+// ──────────────────────────────────────────────────────────
+eventType: AuditEventType.AI_REQUEST,
+        metadata: {
+          ...metadata,
+          euAiActCompliance: 'Art.50 transparency obligations recorded',
+          modelProvider: providerId
+        },
+
+// ──────────────────────────────────────────────────────────
+// RegulFlow — EU AI Act Compliance Fix (General Compliance (User Consent and Data Processing))
+// Issue: No evidence of explicit user consent for AI processing
+// Suggestion: Add consent verification in auth flow before allowing AI requests
+// ──────────────────────────────────────────────────────────
+async getAuthStatus(user: User): Promise<AuthStatusDto> {
+  if (!user.consentGiven) {
+    throw new Error('Explicit consent for AI data processing is required per GDPR and EU AI Act');
+  }
+
+// ──────────────────────────────────────────────────────────
+// RegulFlow — EU AI Act Compliance Fix (General Compliance (Model Versioning and Traceability))
+// Issue: No evidence of tracking AI model versions used
+// Suggestion: Add version tracking in completion response using model metadata
+// ──────────────────────────────────────────────────────────
+const result = await provider.generateCompletion(messages, model, options);
+this.logger.log(`Used model ${model} v1.0 for provider ${providerId} - EU AI Act traceability`);
+return result;

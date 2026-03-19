@@ -173,6 +173,7 @@ export class AIOrchestrationService {
           providerId,
           model,
           completion,
+          disclaimer: 'Integrated providers: OpenAI, Anthropic, Google, Mistral, HuggingFace. See their terms.'
         };
       } catch (error) {
         this.logger.warn(`Provider ${providerId} failed: ${error.message}`);
