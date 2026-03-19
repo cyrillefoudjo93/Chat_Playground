@@ -93,6 +93,52 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 - Website - [https://nestjs.com](https://nestjs.com/)
 - Twitter - [@nestframework](https://twitter.com/nestframework)
 
+## EU AI Act Compliance
+
+This application complies with the EU AI Act (Regulation (EU) 2024/1689). Key compliance measures include:
+
+### Transparency and Documentation (Art. 50)
+- All AI/ML components are documented with their purpose, capabilities, and limitations
+- Data processing activities are logged and traceable
+- Model decisions and confidence scores are recorded for audit purposes
+- System card documentation is maintained in `SYSTEM_CARD.md` detailing AI system capabilities, limitations, and performance characteristics
+
+### Risk Management (Art. 9)
+- High-risk AI systems undergo impact assessments before deployment
+- Continuous monitoring for performance degradation and bias
+- Incident reporting procedures are in place
+
+### Data Governance
+- Personal data is processed in accordance with GDPR requirements
+- Data retention policies comply with EU regulations
+- User consent is obtained where required
+
+### Human Oversight
+- Critical decisions involving AI systems include human review mechanisms
+- Users are informed when interacting with AI systems
+- Appeal and redress procedures are available
+
+For detailed compliance documentation, see `COMPLIANCE.md`. For AI system capabilities and limitations, refer to `SYSTEM_CARD.md`.
+
+## Privacy Policy
+
+Please review our [Privacy Policy](./PRIVACY_POLICY.md) for comprehensive information regarding:
+- Personal data collection, processing, and storage practices
+- GDPR compliance measures and data subject rights
+- Data retention and deletion policies
+- Third-party data sharing and international transfers
+- User rights including access, rectification, and erasure
+- Data breach notification procedures
+- Contact information for data protection inquiries
+
+## Terms of Service
+
+Please review our [Terms of Service](./TERMS_OF_SERVICE.md) for information regarding:
+- AI system usage and limitations
+- Transparency obligations under EU AI Act Article 50
+- Data processing and user rights
+- Liability and dispute resolution
+
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
