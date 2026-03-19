@@ -96,3 +96,13 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+// ──────────────────────────────────────────────────────────
+// RegulFlow — EU AI Act Compliance Fix (Art. 50)
+// Issue: Die README beschreibt die Architektur, erwähnt aber nicht die Verwendung generativer KI und deren Einschränkungen.
+// Suggestion: Ergänzen Sie einen Abschnitt zur KI-Nutzung, Fähigkeiten und Einschränkungen in der Dokumentation.
+// ──────────────────────────────────────────────────────────
+## KI-Transparenz (EU AI Act Art. 50)
+
+Dieses System verwendet generative KI-Modelle von OpenAI, Anthropic, Google Gemini, Mistral und HuggingFace.
+**Einschränkungen:** Mögliche Halluzinationen, Bias, begrenztes Wissen. Inhalte sind nicht immer korrekt.

@@ -53,6 +53,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   }
 
   async handleConnection(client: Socket) {
+  // Art. 50: Einwilligung einholen
+  client.emit('consentRequest', { message: 'Zustimmung zur KI-Nutzung und Datenübertragung erforderlich.' });
+  // Warte auf client response bevor fortfahren
     try {
       const authenticated = await this.connectionManager.handleConnection(client);
       if (!authenticated) {
@@ -61,8 +64,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         return;
       }
 
-      this.logger.log(`Client connected: ${client.id}`);
+                  this.logger.log(`Client connected: ${client.id}`);
       this.initializeHeartbeat(client);
+      client.emit('systemInfo', {
+        limitations: 'KI kann halluzinieren. Überprüfen Sie kritische Informationen.'
+      });
+      // Art. 50: Transparenz für generative KI
+      client.emit('aiNotification', {
+        message: 'Sie interagieren mit einem generativen KI-System (orchestriert von OpenAI, Anthropic u.a.).',
+        type: 'info'
+      });
 
     } catch (error) {
       this.logger.error(`Connection error: ${error.message}`, error.stack);
@@ -148,8 +159,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         timestamp: new Date(),
       };
 
-      await this.auditLogService.log(
-        AuditEventType.CHAT_MESSAGE_SEND,
+            await this.auditLogService.log(
+        AuditEventType.AI_REQUEST,
+        'ai_completion',
+        `KI-Anfrage an ${providerId} gesendet`,
+        AuditEventStatus.SUCCESS,
         'send_message',
         `User ${user.username} sent a message in room ${message.roomId}`,
         AuditEventStatus.SUCCESS,

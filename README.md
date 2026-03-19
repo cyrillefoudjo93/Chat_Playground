@@ -64,7 +64,9 @@ Make sure to set up your environment variables:
 1. Copy `.env.example` to `.env` in both `/hands-free-chat` and `/server` directories
 2. Update the variables according to your environment
 
-## Contributing
+## Kontakt & Beschwerden (Art. 50)
+Bei Fragen zur KI oder Datenschutz: compliance@example.com
+Support-Kanal: /support
 
 1. Create a feature branch
 2. Make your changes
